@@ -1,0 +1,22 @@
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+outstanding-todos.md
+
+# Workspace-specific config (use app.yaml.template)
+# app.yaml
+
+# Git worktrees
+.worktrees/
+
+# Human tokens (brainstorming notes)
+.humantokens/
+
+# Uploaded files (clipboard paste images)
+uploads/
+
+# uv lockfile — not portable across PyPI proxies, generate locally with `uv lock`
+uv.lock

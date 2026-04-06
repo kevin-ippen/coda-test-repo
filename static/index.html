@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Terminal</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/lib/xterm.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cascadia+Code&family=Fira+Code&family=JetBrains+Mono&family=Source+Code+Pro&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; }
+    body { font-family: monospace; transition: background 0.3s, color 0.3s; }
+    #status { position: absolute; top: 10px; left: 10px; z-index: 1000; }
+
+    /* Tab bar */
+    #tab-bar {
+      display: flex; align-items: center; height: 32px; width: 100%;
+      background: rgba(255,255,255,0.04);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      overflow-x: auto; overflow-y: hidden;
+      user-select: none; flex-shrink: 0;
+    }
+    .tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 12px; height: 100%; cursor: pointer;
+      font-size: 12px; white-space: nowrap;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      transition: background 0.15s;
+      position: relative;
+    }
+    .tab:hover { background: rgba(255,255,255,0.06); }
+    .tab.active {
+      background: rgba(255,255,255,0.08);
+      border-bottom: 2px solid rgba(100,150,255,0.6);
+    }
+    .tab-label {
+      outline: none; border: none; background: none;
+      color: inherit; font: inherit; padding: 0;
+      min-width: 30px; max-width: 120px;
+      overflow: hidden; text-overflow: ellipsis;
+      cursor: inherit;
+    }
+    .tab-label:focus {
+      cursor: text;
+      border-bottom: 1px solid rgba(100,150,255,0.5);
+    }
+    .tab-close {
+      opacity: 0; font-size: 10px; padding: 2px 4px;
+      border-radius: 3px; border: none; background: none;
+      color: inherit; cursor: pointer; transition: opacity 0.15s, background 0.15s;
+      line-height: 1; flex-shrink: 0;
+    }
+    .tab:hover .tab-close, .tab.active .tab-close { opacity: 0.6; }
+    .tab-close:hover { opacity: 1 !important; background: rgba(255,255,255,0.1); }
+    #new-tab-btn {
+      padding: 0 10px; height: 100%; border: none; background: none;
+      color: inherit; font-size: 16px; cursor: pointer;
+      opacity: 0.5; transition: opacity 0.15s;
+    }
+    #new-tab-btn:hover { opacity: 1; }
+    #new-tab-btn:disabled { opacity: 0.2; cursor: default; }
+
+    /* Pane container */
+    .tab-pane-container { display: flex; flex-direction: row; height: calc(100% - 33px); width: 100%; }
+    .tab-pane-container.hidden { display: none; }
+    .pane { flex: 1; position: relative; overflow: hidden; min-width: 0; padding-bottom: 2px; box-sizing: border-box; }
+    .pane.active { box-shadow: inset 0 0 0 2px rgba(100,150,255,0.35); }
+
+    /* Divider */
+    .pane-divider {
+      flex: 0 0 4px; cursor: col-resize;
+      background: rgba(128,128,128,0.15);
+      transition: background 0.15s;
+      z-index: 1;
+    }
+    .pane-divider:hover, .pane-divider.dragging {
+      background: rgba(100,150,255,0.5);
+    }
+
+    /* Toolbar — translucent right-edge drawer */
+    #toolbar-tab {
+      position: fixed; bottom: 12px; right: 0; z-index: 1001;
+      cursor: pointer; padding: 10px 4px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 8px 0 0 8px;
+      border: 1px solid rgba(255,255,255,0.08); border-right: none;
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      color: inherit; font-size: 12px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.2s, right 0.25s ease, box-shadow 0.2s;
+      user-select: none;
+    }
+    #toolbar-tab:hover {
+      background: rgba(255,255,255,0.12);
+      box-shadow: 0 0 12px rgba(100,150,255,0.15);
+    }
+    #toolbar-tab .arrow {
+      font-size: 9px; transition: transform 0.3s ease; display: block;
+    }
+    #toolbar-wrapper { position: fixed; bottom: 0; right: 0; z-index: 1000; pointer-events: none; }
+    #toolbar {
+      pointer-events: auto;
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 16px 12px; min-width: 170px;
+      background: rgba(255,255,255,0.04);
+      border-left: 1px solid rgba(255,255,255,0.08);
+      border-top: 1px solid rgba(255,255,255,0.08);
+      border-top-left-radius: 14px;
+      backdrop-filter: blur(24px) saturate(1.2);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+      box-shadow: -4px -2px 24px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.03) inset;
+      max-height: 80vh; box-sizing: border-box; overflow-y: auto;
+      transform: translateX(100%); transition: transform 0.25s ease;
+    }
+    #toolbar-wrapper.open #toolbar { transform: translateX(0); }
+    #toolbar .group-label {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 1.5px;
+      opacity: 0.35; padding: 0 2px; margin-top: 2px; font-weight: 600;
+    }
+    #toolbar select, #toolbar button {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08); border-radius: 6px;
+      padding: 6px 10px; cursor: pointer; font-size: 12px; line-height: 1.4;
+      color: inherit; transition: all 0.15s; width: 100%;
+      text-align: left; box-sizing: border-box;
+    }
+    #toolbar select:hover, #toolbar button:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.18);
+    }
+    #toolbar select { font-family: inherit; }
+    #toolbar .tool-row {
+      display: flex; align-items: center; gap: 6px;
+    }
+    #toolbar .tool-row button {
+      width: auto; flex: 1; text-align: center; padding: 8px; font-size: 18px;
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    }
+    #toolbar .tool-row button:hover {
+      background: rgba(100,150,255,0.12);
+      border-color: rgba(100,150,255,0.25);
+      box-shadow: 0 0 8px rgba(100,150,255,0.1);
+    }
+    #toolbar .font-size-row {
+      display: flex; align-items: center; gap: 4px;
+    }
+    #toolbar .font-size-row button {
+      width: auto; flex-shrink: 0; padding: 5px 10px; text-align: center;
+      font-size: 12px; font-weight: 600;
+    }
+    #toolbar .font-size-row span { flex: 1; text-align: center; font-size: 12px; opacity: 0.7; }
+    #toolbar .separator {
+      height: 1px; width: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+    }
+
+    /* Speak button inside toolbar */
+    #speak-btn { display: none; }
+    #speak-btn.supported { display: flex; }
+    #speak-btn.recording {
+      background: rgba(255,50,50,0.12) !important;
+      border-color: rgba(255,80,80,0.4) !important;
+      box-shadow: 0 0 12px rgba(255,50,50,0.15);
+    }
+    #speak-btn.recording .speak-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #ff4444;
+      animation: pulse 1s infinite; flex-shrink: 0;
+    }
+
+    /* Shortcuts help modal */
+    #shortcuts-overlay {
+      display: none; position: fixed; inset: 0; z-index: 2000;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    #shortcuts-overlay.visible { display: flex; }
+    #shortcuts-modal {
+      width: min(90vw, 460px); max-height: 80vh; overflow-y: auto;
+      border-radius: 14px; padding: 24px;
+      border: 1px solid rgba(255,255,255,0.1);
+      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+    }
+    #shortcuts-modal h2 {
+      margin: 0 0 16px; font-size: 16px; font-weight: 600;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    #shortcuts-modal h2 button {
+      background: none; border: none; color: inherit; cursor: pointer;
+      font-size: 18px; opacity: 0.5; padding: 2px 6px; border-radius: 4px;
+    }
+    #shortcuts-modal h2 button:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+    #shortcuts-modal h3 {
+      margin: 14px 0 6px; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 1.5px; opacity: 0.4; font-weight: 600;
+    }
+    #shortcuts-modal h3:first-of-type { margin-top: 0; }
+    #shortcuts-modal .shortcut-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0; font-size: 13px;
+    }
+    #shortcuts-modal .shortcut-row span:last-child {
+      font-family: monospace; font-size: 11px; opacity: 0.6;
+      background: rgba(255,255,255,0.06); padding: 2px 8px;
+      border-radius: 4px; border: 1px solid rgba(255,255,255,0.08);
+    }
+
+    /* Search bar */
+    #search-bar {
+      display: none; position: fixed; top: 10px; right: 40px; z-index: 1001;
+      padding: 6px 8px; border-radius: 6px;
+      border: 1px solid rgba(128,128,128,0.4);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+      gap: 4px; align-items: center;
+    }
+    #search-bar.visible { display: flex; }
+    #search-bar input {
+      background: transparent; border: 1px solid rgba(128,128,128,0.3); border-radius: 3px;
+      padding: 3px 6px; font-size: 13px; color: inherit; outline: none; width: 200px;
+      font-family: inherit;
+    }
+    #search-bar input:focus { border-color: rgba(100,150,255,0.6); }
+    #search-bar button {
+      background: none; border: 1px solid rgba(128,128,128,0.3); border-radius: 3px;
+      padding: 2px 8px; cursor: pointer; color: inherit; font-size: 12px;
+    }
+    #search-bar button:hover { border-color: rgba(128,128,128,0.7); }
+
+    /* Voice dictation */
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    #dictation-preview {
+      display: none; position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+      z-index: 1001; width: min(85vw, 700px); border-radius: 16px;
+      border: 1px solid rgba(128,128,128,0.25);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.05) inset;
+      flex-direction: column; overflow: hidden;
+    }
+    #dictation-preview.visible { display: flex; }
+    #dictation-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px; border-bottom: 1px solid rgba(128,128,128,0.15);
+      font-size: 13px; font-weight: 600; letter-spacing: 0.3px;
+    }
+    #dictation-header .rec-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #ff4444;
+      animation: pulse 1s infinite; flex-shrink: 0;
+    }
+    #dictation-header .shortcut {
+      margin-left: auto; font-size: 11px; opacity: 0.5; font-weight: 400;
+    }
+    #dictation-input {
+      width: 100%; min-height: 80px; max-height: 200px; resize: vertical;
+      background: transparent; border: none; padding: 14px 16px;
+      font-size: 16px; line-height: 1.5; color: inherit;
+      outline: none; font-family: inherit; word-wrap: break-word;
+      box-sizing: border-box;
+    }
+    #dictation-input::placeholder { opacity: 0.4; }
+    #dictation-interim {
+      padding: 0 16px 8px; font-size: 14px; line-height: 1.4;
+      font-style: italic; opacity: 0.45; min-height: 0;
+      word-wrap: break-word; display: none;
+    }
+    #dictation-interim.has-text { display: block; }
+    #dictation-actions {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px; border-top: 1px solid rgba(128,128,128,0.15);
+    }
+    #dictation-actions button {
+      background: none; border: 1px solid rgba(128,128,128,0.3); border-radius: 8px;
+      padding: 6px 16px; cursor: pointer; color: inherit; font-size: 13px;
+      font-weight: 500; transition: all 0.15s;
+    }
+    #dictation-actions button:hover { border-color: rgba(128,128,128,0.6); }
+    #dictation-actions button.send-btn {
+      background: rgba(80,200,120,0.15); border-color: rgba(80,200,120,0.5);
+    }
+    #dictation-actions button.send-btn:hover {
+      background: rgba(80,200,120,0.25); border-color: rgba(80,200,120,0.8);
+    }
+    #dictation-actions .hint {
+      margin-left: auto; font-size: 11px; opacity: 0.4;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Loading...</div>
+  <div id="toolbar-tab" title="Toggle toolbar">
+    <span class="arrow">&#x25C0;</span>
+  </div>
+  <div id="toolbar-wrapper">
+    <div id="toolbar">
+      <div class="group-label">Theme</div>
+      <select id="theme-select" title="Color theme"></select>
+      <button id="theme-toggle" title="Toggle light/dark mode">&#x2600;&#xFE0F;</button>
+      <div class="separator"></div>
+      <div class="group-label">Font</div>
+      <select id="font-family-select" title="Font family"></select>
+      <div class="font-size-row">
+        <button id="font-decrease" title="Decrease font size (Ctrl+-)">A-</button>
+        <span id="font-size-display"></span>
+        <button id="font-increase" title="Increase font size (Ctrl+=)">A+</button>
+      </div>
+      <div class="separator"></div>
+      <div class="tool-row">
+        <button id="search-btn" title="Search (Ctrl+Shift+F)">&#x1F50D;</button>
+        <button id="speak-btn" title="Voice (Option+V)">
+          <span class="speak-dot" style="display:none;"></span>
+          &#x1F3A4;
+        </button>
+        <button id="sessions-btn" title="Manage sessions (Ctrl+Shift+S)">&#x2630;</button>
+        <button id="split-btn" title="Split pane (Alt+Shift+D)">&#x229E;</button>
+        <button id="close-pane-btn" title="Close pane (Alt+Shift+W)" style="display:none;">&#x2715;</button>
+        <button id="next-pane-btn" title="Next pane (Alt+Shift+])" style="display:none;">&#x21C6;</button>
+        <button id="shortcuts-btn" title="Keyboard shortcuts (Ctrl+/)">?</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Search bar overlay -->
+  <div id="search-bar">
+    <input id="search-input" type="text" placeholder="Search..." autocomplete="off" spellcheck="false">
+    <button id="search-prev" title="Previous (Shift+Enter)">&#x25B2;</button>
+    <button id="search-next" title="Next (Enter)">&#x25BC;</button>
+    <button id="search-close" title="Close (Escape)">&#x2715;</button>
+  </div>
+
+  <!-- Voice dictation preview -->
+  <div id="dictation-preview">
+    <div id="dictation-header">
+      <span class="rec-dot"></span>
+      <span>Voice Dictation</span>
+      <span class="shortcut">&#x2325;V</span>
+    </div>
+    <textarea id="dictation-input" placeholder="Start speaking..."></textarea>
+    <div id="dictation-interim"></div>
+    <div id="dictation-actions">
+      <button id="dictation-send" class="send-btn">Send &#x23CE;</button>
+      <button id="dictation-cancel">Cancel</button>
+      <span class="hint">Enter to send &middot; Esc to cancel</span>
+    </div>
+  </div>
+
+  <!-- Keyboard shortcuts modal -->
+  <div id="shortcuts-overlay">
+    <div id="shortcuts-modal">
+      <h2>Keyboard Shortcuts <button id="shortcuts-close" title="Close">&times;</button></h2>
+      <h3>Tabs</h3>
+      <div class="shortcut-row"><span>Sessions</span><span>Ctrl+Shift+S</span></div>
+      <div class="shortcut-row"><span>New tab</span><span>Ctrl+Shift+T</span></div>
+      <div class="shortcut-row"><span>Close tab</span><span>Ctrl+Shift+W</span></div>
+      <div class="shortcut-row"><span>Next tab</span><span>Ctrl+Shift+]</span></div>
+      <div class="shortcut-row"><span>Previous tab</span><span>Ctrl+Shift+[</span></div>
+      <div class="shortcut-row"><span>Jump to tab 1-9</span><span>Ctrl+Shift+1-9</span></div>
+      <h3>Panes</h3>
+      <div class="shortcut-row"><span>Split pane</span><span>Alt+Shift+D</span></div>
+      <div class="shortcut-row"><span>Close pane</span><span>Alt+Shift+W</span></div>
+      <div class="shortcut-row"><span>Next pane</span><span>Alt+Shift+]</span></div>
+      <div class="shortcut-row"><span>Previous pane</span><span>Alt+Shift+[</span></div>
+      <h3>Clipboard</h3>
+      <div class="shortcut-row"><span>Copy</span><span id="sc-copy">Ctrl+C</span></div>
+      <div class="shortcut-row"><span>Paste</span><span id="sc-paste">Ctrl+V</span></div>
+      <div class="shortcut-row"><span>Paste image</span><span>Paste from clipboard</span></div>
+      <h3>General</h3>
+      <div class="shortcut-row"><span>Search</span><span>Ctrl+Shift+F</span></div>
+      <div class="shortcut-row"><span>Voice dictation</span><span>Alt+V</span></div>
+      <div class="shortcut-row"><span>Increase font</span><span>Ctrl+=</span></div>
+      <div class="shortcut-row"><span>Decrease font</span><span>Ctrl+-</span></div>
+      <div class="shortcut-row"><span>Reset font</span><span>Ctrl+0</span></div>
+      <div class="shortcut-row"><span>This help</span><span>Ctrl+/</span></div>
+    </div>
+  </div>
+
+  <div id="tab-bar">
+    <button id="new-tab-btn" title="New tab (Ctrl+Shift+T)">+</button>
+  </div>
+  <!-- Tab pane containers are created dynamically by createTab() -->
+
+  <script src="/static/lib/xterm.js"></script>
+  <script src="/static/lib/addon-fit.js"></script>
+  <script src="/static/lib/addon-web-links.js"></script>
+  <script src="/static/lib/addon-search.js"></script>
+  <script src="/static/lib/addon-image.js"></script>
+  <script src="/static/lib/socket.io.min.js"></script>
+  <script>
+    // ── Platform-aware shortcut labels ──────────────────────────────
+    if (/Mac|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      const scCopy = document.getElementById('sc-copy');
+      const scPaste = document.getElementById('sc-paste');
+      if (scCopy) scCopy.textContent = 'Cmd+C';
+      if (scPaste) scPaste.textContent = 'Cmd+V';
+    }
+
+    // ── Theme Presets ──────────────────────────────────────────────
+    const themes = {
+      'Dark': {
+        type: 'dark',
+        body: '#1e1e1e',
+        theme: {
+          background: '#1e1e1e', foreground: '#d4d4d4', cursor: '#ffffff', cursorAccent: '#1e1e1e',
+          selectionBackground: '#264f78',
+          black: '#1e1e1e', red: '#f44747', green: '#6a9955', yellow: '#d7ba7d',
+          blue: '#569cd6', magenta: '#c586c0', cyan: '#4ec9b0', white: '#d4d4d4'
+        }
+      },
+      'Light': {
+        type: 'light',
+        body: '#f5f5f5',
+        theme: {
+          background: '#f5f5f5', foreground: '#383a42', cursor: '#526eff', cursorAccent: '#f5f5f5',
+          selectionBackground: '#d7d7ff',
+          black: '#383a42', red: '#e45649', green: '#50a14f', yellow: '#c18401',
+          blue: '#4078f2', magenta: '#a626a4', cyan: '#0184bc', white: '#fafafa'
+        }
+      },
+      'Dracula': {
+        type: 'dark',
+        body: '#282a36',
+        theme: {
+          background: '#282a36', foreground: '#f8f8f2', cursor: '#f8f8f2', cursorAccent: '#282a36',
+          selectionBackground: '#44475a',
+          black: '#21222c', red: '#ff5555', green: '#50fa7b', yellow: '#f1fa8c',
+          blue: '#bd93f9', magenta: '#ff79c6', cyan: '#8be9fd', white: '#f8f8f2'
+        }
+      },
+      'Solarized Dark': {
+        type: 'dark',
+        body: '#002b36',
+        theme: {
+          background: '#002b36', foreground: '#839496', cursor: '#93a1a1', cursorAccent: '#002b36',
+          selectionBackground: '#073642',
+          black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900',
+          blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#eee8d5'
+        }
+      },
+      'Solarized Light': {
+        type: 'light',
+        body: '#fdf6e3',
+        theme: {
+          background: '#fdf6e3', foreground: '#657b83', cursor: '#586e75', cursorAccent: '#fdf6e3',
+          selectionBackground: '#eee8d5',
+          black: '#073642', red: '#dc322f', green: '#859900', yellow: '#b58900',
+          blue: '#268bd2', magenta: '#d33682', cyan: '#2aa198', white: '#fdf6e3'
+        }
+      },
+      'Nord': {
+        type: 'dark',
+        body: '#2e3440',
+        theme: {
+          background: '#2e3440', foreground: '#d8dee9', cursor: '#eceff4', cursorAccent: '#2e3440',
+          selectionBackground: '#434c5e',
+          black: '#3b4252', red: '#bf616a', green: '#a3be8c', yellow: '#ebcb8b',
+          blue: '#81a1c1', magenta: '#b48ead', cyan: '#88c0d0', white: '#e5e9f0'
+        }
+      },
+      'Monokai': {
+        type: 'dark',
+        body: '#272822',
+        theme: {
+          background: '#272822', foreground: '#f8f8f2', cursor: '#f8f8f0', cursorAccent: '#272822',
+          selectionBackground: '#49483e',
+          black: '#272822', red: '#f92672', green: '#a6e22e', yellow: '#e6db74',
+          blue: '#66d9ef', magenta: '#ae81ff', cyan: '#a1efe4', white: '#f8f8f2'
+        }
+      },
+      'GitHub Dark': {
+        type: 'dark',
+        body: '#0d1117',
+        theme: {
+          background: '#0d1117', foreground: '#c9d1d9', cursor: '#e6edf3', cursorAccent: '#0d1117',
+          selectionBackground: '#1f2937',
+          black: '#0d1117', red: '#ff7b72', green: '#7ee787', yellow: '#d29922',
+          blue: '#79c0ff', magenta: '#d2a8ff', cyan: '#a5d6ff', white: '#c9d1d9'
+        }
+      }
+    };
+
+    // ── Font Families ──────────────────────────────────────────────
+    const fontFamilies = {
+      'System Default': 'monospace',
+      'JetBrains Mono': '"JetBrains Mono", monospace',
+      'Fira Code': '"Fira Code", monospace',
+      'Cascadia Code': '"Cascadia Code", monospace',
+      'Source Code Pro': '"Source Code Pro", monospace'
+    };
+
+    // ── State ──────────────────────────────────────────────────────
+    const MIN_FONT_SIZE = 8;
+    const MAX_FONT_SIZE = 32;
+    const DEFAULT_FONT_SIZE = 14;
+
+    let currentFontSize = parseInt(localStorage.getItem('terminal-font-size')) || DEFAULT_FONT_SIZE;
+    let currentFontFamily = localStorage.getItem('terminal-font-family') || 'System Default';
+    let currentThemeName = localStorage.getItem('terminal-theme-name') || null;
+    let lastDarkTheme = localStorage.getItem('terminal-last-dark') || 'Dark';
+    let lastLightTheme = localStorage.getItem('terminal-last-light') || 'Light';
+
+    // ── Tab & Pane Object Model ───────────────────────────────────
+    // Tab: { id, label, panes[], activePaneId, paneContainer, divider }
+    // Pane: { id, element, term, fitAddon, searchAddon, sessionId }
+    const MAX_TABS = 10;
+    let tabs = [];
+    let activeTabId = null;
+    let tabIdCounter = 0;
+    let paneIdCounter = 0;
+
+    function getActiveTab() {
+      return tabs.find(t => t.id === activeTabId) || tabs[0];
+    }
+
+    function getActivePane() {
+      const tab = getActiveTab();
+      if (!tab) return null;
+      return tab.panes.find(p => p.id === tab.activePaneId) || tab.panes[0];
+    }
+
+    function getAllPanes() {
+      return tabs.flatMap(t => t.panes);
+    }
+
+    function focusPane(id) {
+      const tab = getActiveTab();
+      if (!tab) return;
+      tab.activePaneId = id;
+      tab.panes.forEach(p => {
+        p.element.classList.toggle('active', p.id === id);
+        if (p.id === id) p.term.focus();
+      });
+    }
+
+    // Resolve initial theme
+    if (!currentThemeName || !themes[currentThemeName]) {
+      const prefersDark = !window.matchMedia('(prefers-color-scheme: light)').matches;
+      currentThemeName = prefersDark ? 'Dark' : 'Light';
+    }
+
+    // ── Theme Application ──────────────────────────────────────────
+    function applyTheme(name) {
+      const preset = themes[name];
+      if (!preset) return;
+      currentThemeName = name;
+      document.body.style.background = preset.body;
+      document.body.style.color = preset.type === 'dark' ? '#fff' : '#383a42';
+      document.getElementById('theme-toggle').textContent = preset.type === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
+      const overlayBg = preset.type === 'dark' ? 'rgba(30,30,30,0.9)' : 'rgba(245,245,245,0.9)';
+      document.getElementById('search-bar').style.background = overlayBg;
+      document.getElementById('dictation-preview').style.background = overlayBg;
+      // Apply to all panes
+      getAllPanes().forEach(p => { p.term.options.theme = preset.theme; });
+      if (preset.type === 'dark') {
+        lastDarkTheme = name;
+        localStorage.setItem('terminal-last-dark', name);
+      } else {
+        lastLightTheme = name;
+        localStorage.setItem('terminal-last-light', name);
+      }
+      localStorage.setItem('terminal-theme-name', name);
+      document.getElementById('theme-select').value = name;
+    }
+
+    // ── Font Size ──────────────────────────────────────────────────
+    function updateFontSizeDisplay() {
+      document.getElementById('font-size-display').textContent = currentFontSize + 'px';
+    }
+
+    function setFontSize(size) {
+      currentFontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size));
+      localStorage.setItem('terminal-font-size', currentFontSize);
+      updateFontSizeDisplay();
+      getAllPanes().forEach(p => { p.term.options.fontSize = currentFontSize; });
+      refitAllPanes();
+    }
+
+    // ── Font Family ────────────────────────────────────────────────
+    function setFontFamily(name) {
+      const family = fontFamilies[name];
+      if (!family) return;
+      currentFontFamily = name;
+      localStorage.setItem('terminal-font-family', name);
+      getAllPanes().forEach(p => { p.term.options.fontFamily = family; });
+      refitAllPanes();
+      document.getElementById('font-family-select').value = name;
+    }
+
+    // ── Refit all panes ─────────────────────────────────────────────
+    function refitAllPanes() {
+      const tab = getActiveTab();
+      if (!tab) return;
+      tab.panes.forEach(p => {
+        p.fitAddon.fit();
+        if (p.sessionId) sendResize(p.term.cols, p.term.rows, p.sessionId);
+      });
+    }
+
+    // ── Populate toolbar dropdowns ─────────────────────────────────
+    const themeSelect = document.getElementById('theme-select');
+    Object.keys(themes).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      themeSelect.appendChild(opt);
+    });
+    themeSelect.value = currentThemeName;
+    themeSelect.addEventListener('change', e => applyTheme(e.target.value));
+
+    const fontFamilySelect = document.getElementById('font-family-select');
+    Object.keys(fontFamilies).forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      fontFamilySelect.appendChild(opt);
+    });
+    fontFamilySelect.value = currentFontFamily;
+    fontFamilySelect.addEventListener('change', e => setFontFamily(e.target.value));
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const currentType = themes[currentThemeName].type;
+      applyTheme(currentType === 'dark' ? lastLightTheme : lastDarkTheme);
+    });
+
+    document.getElementById('font-decrease').addEventListener('click', () => setFontSize(currentFontSize - 1));
+    document.getElementById('font-increase').addEventListener('click', () => setFontSize(currentFontSize + 1));
+
+    applyTheme(currentThemeName);
+    updateFontSizeDisplay();
+
+    // ── Toolbar drawer toggle ──────────────────────────────────────
+    const toolbarWrapper = document.getElementById('toolbar-wrapper');
+    const toolbarTab = document.getElementById('toolbar-tab');
+    const toolbarPanel = document.getElementById('toolbar');
+    toolbarTab.addEventListener('click', () => {
+      const isOpen = toolbarWrapper.classList.toggle('open');
+      if (isOpen) {
+        requestAnimationFrame(() => {
+          const w = toolbarPanel.offsetWidth;
+          toolbarTab.style.right = w + 'px';
+        });
+      } else {
+        toolbarTab.style.right = '0';
+      }
+    });
+
+    // ── Search ─────────────────────────────────────────────────────
+    let searchVisible = false;
+    const searchBar = document.getElementById('search-bar');
+    const searchInput = document.getElementById('search-input');
+
+    function toggleSearch() {
+      searchVisible = !searchVisible;
+      searchBar.classList.toggle('visible', searchVisible);
+      if (searchVisible) {
+        searchInput.focus();
+        searchInput.select();
+      } else {
+        const ap = getActivePane();
+        if (ap && ap.searchAddon) ap.searchAddon.clearDecorations();
+        if (ap) ap.term.focus();
+      }
+    }
+
+    function doSearch(direction) {
+      const ap = getActivePane();
+      if (!ap || !ap.searchAddon) return;
+      const query = searchInput.value;
+      if (!query) return;
+      const opts = { decorations: { matchOverviewRuler: '#888', activeMatchColorOverviewRuler: '#ffb000' } };
+      if (direction === 'next') {
+        ap.searchAddon.findNext(query, opts);
+      } else {
+        ap.searchAddon.findPrevious(query, opts);
+      }
+    }
+
+    searchInput.addEventListener('input', () => doSearch('next'));
+    document.getElementById('search-next').addEventListener('click', () => doSearch('next'));
+    document.getElementById('search-prev').addEventListener('click', () => doSearch('prev'));
+    document.getElementById('search-close').addEventListener('click', () => toggleSearch());
+    document.getElementById('search-btn').addEventListener('click', () => toggleSearch());
+
+    searchInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); doSearch(e.shiftKey ? 'prev' : 'next'); }
+      if (e.key === 'Escape') { e.preventDefault(); toggleSearch(); }
+    });
+
+    // ── Shortcuts Help Modal ────────────────────────────────────────
+    const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+    const shortcutsModal = document.getElementById('shortcuts-modal');
+
+    function toggleShortcutsHelp() {
+      const visible = shortcutsOverlay.classList.toggle('visible');
+      if (!visible) {
+        const ap = getActivePane();
+        if (ap) ap.term.focus();
+      }
+      // Theme-aware background
+      const preset = themes[currentThemeName];
+      if (preset) {
+        shortcutsModal.style.background = preset.type === 'dark'
+          ? 'rgba(30,30,30,0.95)' : 'rgba(245,245,245,0.95)';
+      }
+    }
+
+    document.getElementById('shortcuts-btn').addEventListener('click', toggleShortcutsHelp);
+    document.getElementById('shortcuts-close').addEventListener('click', toggleShortcutsHelp);
+    shortcutsOverlay.addEventListener('click', (e) => {
+      if (e.target === shortcutsOverlay) toggleShortcutsHelp();
+    });
+
+    // ── Voice Dictation ────────────────────────────────────────────
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    let dictationActive = false;
+    const speakBtn = document.getElementById('speak-btn');
+    const speakDot = speakBtn.querySelector('.speak-dot');
+    const dictationPreview = document.getElementById('dictation-preview');
+    const dictationInput = document.getElementById('dictation-input');
+    const dictationInterim = document.getElementById('dictation-interim');
+
+    if (SpeechRecognition) {
+      speakBtn.classList.add('supported');
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event) => {
+        let final = '';
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            final += transcript;
+          } else {
+            interim += transcript;
+          }
+        }
+        if (final) {
+          dictationInput.value = (dictationInput.value + (dictationInput.value ? ' ' : '') + final).trim();
+          dictationInterim.textContent = '';
+          dictationInterim.classList.remove('has-text');
+        }
+        if (interim) {
+          dictationInterim.textContent = interim;
+          dictationInterim.classList.add('has-text');
+        }
+      };
+
+      recognition.onerror = () => stopDictation();
+      recognition.onend = () => {
+        if (dictationActive) {
+          try { recognition.start(); } catch(e) { stopDictation(); }
+        }
+      };
+    }
+
+    function startDictation() {
+      if (!recognition || dictationActive) return;
+      dictationActive = true;
+      speakBtn.classList.add('recording');
+      speakDot.style.display = '';
+      speakBtn.innerHTML = '<span class="speak-dot"></span> &#x1F3A4;';
+      dictationPreview.classList.add('visible');
+      dictationInput.value = '';
+      dictationInterim.textContent = '';
+      dictationInterim.classList.remove('has-text');
+      dictationInput.focus();
+      try { recognition.start(); } catch(e) { stopDictation(); }
+    }
+
+    function stopDictation() {
+      dictationActive = false;
+      speakBtn.classList.remove('recording');
+      speakBtn.innerHTML = '&#x1F3A4;';
+      if (recognition) { try { recognition.stop(); } catch(e) {} }
+    }
+
+    function closeDictation() {
+      stopDictation();
+      dictationPreview.classList.remove('visible');
+      dictationInput.value = '';
+      dictationInterim.textContent = '';
+      dictationInterim.classList.remove('has-text');
+      const ap = getActivePane();
+      if (ap) ap.term.focus();
+    }
+
+    function sendDictation() {
+      const text = dictationInput.value.trim();
+      const ap = getActivePane();
+      if (text && ap && ap.sessionId) {
+        sendInput(text, ap.sessionId);
+      }
+      closeDictation();
+    }
+
+    speakBtn.addEventListener('click', () => {
+      if (dictationActive) closeDictation();
+      else startDictation();
+    });
+    document.getElementById('dictation-send').addEventListener('click', sendDictation);
+    document.getElementById('dictation-cancel').addEventListener('click', closeDictation);
+    dictationInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDictation(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeDictation(); }
+    });
+
+    // ── Global Keyboard Shortcuts ──────────────────────────────────
+    // Use capture phase so shortcuts fire before xterm.js swallows the event
+    document.addEventListener('keydown', e => {
+      // Ctrl+= : increase font
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === '=' || e.key === '+')) {
+        e.preventDefault(); setFontSize(currentFontSize + 1); return;
+      }
+      // Ctrl+- : decrease font
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key === '-') {
+        e.preventDefault(); setFontSize(currentFontSize - 1); return;
+      }
+      // Ctrl+0 : reset font
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key === '0') {
+        e.preventDefault(); setFontSize(DEFAULT_FONT_SIZE); return;
+      }
+      // Ctrl+/ : toggle shortcuts help
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key === '/') {
+        e.preventDefault(); toggleShortcutsHelp(); return;
+      }
+      // Escape : close shortcuts help if open
+      if (e.key === 'Escape' && shortcutsOverlay.classList.contains('visible')) {
+        e.preventDefault(); e.stopPropagation(); toggleShortcutsHelp(); return;
+      }
+      // Ctrl+Shift+F : toggle search
+      if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault(); toggleSearch(); return;
+      }
+      // Alt+V (Option+V) : toggle voice dictation
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyV') {
+        e.preventDefault();
+        if (dictationActive) closeDictation();
+        else startDictation();
+        return;
+      }
+
+      // ── Tab shortcuts (Ctrl+Shift) ──
+      // Ctrl+Shift+S : manage sessions (picker)
+      if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+        e.preventDefault(); document.getElementById('sessions-btn').click(); return;
+      }
+      // Ctrl+Shift+T : new tab
+      if (e.ctrlKey && e.shiftKey && e.key === 'T') {
+        e.preventDefault(); createTab({ newSession: true }); return;
+      }
+      // Ctrl+Shift+W : close active pane (closes tab if last pane)
+      if (e.ctrlKey && e.shiftKey && e.key === 'W') {
+        e.preventDefault(); closeActivePane(); return;
+      }
+      // Ctrl+Shift+] : next tab
+      if (e.ctrlKey && e.shiftKey && e.code === 'BracketRight') {
+        e.preventDefault(); cycleTabFocus('next'); return;
+      }
+      // Ctrl+Shift+[ : prev tab
+      if (e.ctrlKey && e.shiftKey && e.code === 'BracketLeft') {
+        e.preventDefault(); cycleTabFocus('prev'); return;
+      }
+      // Ctrl+Shift+1-9 : jump to tab
+      if (e.ctrlKey && e.shiftKey && e.code >= 'Digit1' && e.code <= 'Digit9') {
+        e.preventDefault(); e.stopPropagation(); jumpToTab(parseInt(e.code.slice(-1))); return;
+      }
+
+      // ── Pane shortcuts (Alt+Shift) ──
+      // Use e.code (physical key) because Alt/Option on macOS changes e.key
+      // Alt+Shift+D : split pane
+      if (e.altKey && e.shiftKey && e.code === 'KeyD') {
+        e.preventDefault(); e.stopPropagation(); splitPane(); return;
+      }
+      // Alt+Shift+W : close pane
+      if (e.altKey && e.shiftKey && e.code === 'KeyW') {
+        e.preventDefault(); e.stopPropagation(); closeActivePane(); return;
+      }
+      // Alt+Shift+] : next pane
+      if (e.altKey && e.shiftKey && e.code === 'BracketRight') {
+        e.preventDefault(); e.stopPropagation(); cyclePaneFocus('next'); return;
+      }
+      // Alt+Shift+[ : prev pane
+      if (e.altKey && e.shiftKey && e.code === 'BracketLeft') {
+        e.preventDefault(); e.stopPropagation(); cyclePaneFocus('prev'); return;
+      }
+    }, true);  // capture phase — fire before xterm.js
+
+    // ── Session / IO (parameterized by sessionId) ──────────────────
+    const status = document.getElementById('status');
+
+    async function createSession(label) {
+      const resp = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: label || '' })
+      });
+      const data = await resp.json();
+      if (data.error) throw new Error(data.error);
+      return data.session_id;
+    }
+
+    // ── WebSocket Connection (AC-10, AC-11, AC-14) ────────────────
+    let socket = null;
+    let wsConnected = false;
+    let wsHeartbeatTimer = null;
+    const WS_HEARTBEAT_INTERVAL = 30000; // 30s — well within 24-hour session timeout
+
+    function initWebSocket() {
+      // Only init once; skip if Socket.IO client not loaded
+      if (socket || typeof io === 'undefined') {
+        console.log('[ws] Socket.IO client not available, using HTTP polling');
+        return;
+      }
+
+      socket = io({ transports: ['websocket', 'polling'] });
+
+      socket.on('connect', () => {
+        // Check actual transport — Socket.IO reports connected=true even on long-polling
+        // through Databricks proxy. Only stop poll-worker for true WebSocket.
+        const transport = socket.io.engine.transport.name;
+        const isTrueWS = transport === 'websocket';
+        console.log(`[ws] Connected (transport: ${transport}, trueWS: ${isTrueWS})`);
+
+        // Always join rooms regardless of transport
+        getAllPanes().forEach(p => {
+          if (p.sessionId) {
+            socket.emit('join_session', { session_id: p.sessionId });
+          }
+        });
+
+        if (isTrueWS) {
+          wsConnected = true;
+          // Only stop poll-worker when we have a real WebSocket
+          getAllPanes().forEach(p => {
+            if (p.id) pollWorker.postMessage({ type: 'stop_poll', paneId: p.id });
+          });
+          // Start WS heartbeat — keeps idle sessions alive (replaces poll-worker keepalive)
+          if (wsHeartbeatTimer) clearInterval(wsHeartbeatTimer);
+          wsHeartbeatTimer = setInterval(() => {
+            const sids = getAllPanes().map(p => p.sessionId).filter(Boolean);
+            if (sids.length > 0) socket.emit('heartbeat', { session_ids: sids });
+          }, WS_HEARTBEAT_INTERVAL);
+        } else {
+          console.log('[ws] Connected via polling — keeping poll-worker active');
+          // Don't set wsConnected — poll-worker stays active as primary transport
+        }
+
+        // Listen for late upgrade from polling → websocket
+        socket.io.engine.on('upgrade', (transport) => {
+          console.log(`[ws] Transport upgraded to: ${transport.name}`);
+          if (transport.name === 'websocket') {
+            wsConnected = true;
+            getAllPanes().forEach(p => {
+              if (p.id) pollWorker.postMessage({ type: 'stop_poll', paneId: p.id });
+            });
+            if (!wsHeartbeatTimer) {
+              wsHeartbeatTimer = setInterval(() => {
+                const sids = getAllPanes().map(p => p.sessionId).filter(Boolean);
+                if (sids.length > 0) socket.emit('heartbeat', { session_ids: sids });
+              }, WS_HEARTBEAT_INTERVAL);
+            }
+          }
+        });
+      });
+
+      socket.on('disconnect', (reason) => {
+        console.log('[ws] Disconnected:', reason);
+        wsConnected = false;
+        // Stop WS heartbeat — poll-worker takes over keepalive
+        if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
+        // Fall back to HTTP polling for all active panes (AC-14)
+        getAllPanes().forEach(p => {
+          if (p.sessionId) {
+            pollWorker.postMessage({ type: 'start_poll', paneId: p.id, sessionId: p.sessionId });
+          }
+        });
+      });
+
+      socket.on('connect_error', (err) => {
+        console.log('[ws] Connection error:', err.message);
+        wsConnected = false;
+        // Ensure HTTP polling is running as fallback (AC-14)
+        getAllPanes().forEach(p => {
+          if (p.sessionId) {
+            pollWorker.postMessage({ type: 'start_poll', paneId: p.id, sessionId: p.sessionId });
+          }
+        });
+      });
+
+      // Receive terminal output pushed from server (AC-8)
+      socket.on('terminal_output', (data) => {
+        const pane = getAllPanes().find(p => p.sessionId === data.session_id);
+        if (pane && data.output) {
+          pane.term.write(data.output);
+        }
+      });
+
+      // Receive session exited notification (AC-9)
+      socket.on('session_exited', (data) => {
+        const pane = getAllPanes().find(p => p.sessionId === data.session_id);
+        if (pane) {
+          pane.term.write('\r\n\x1b[33mShell process exited.\x1b[0m\r\n');
+          cleanupPane(pane);
+        }
+      });
+
+      // Receive session closed notification (server-side cleanup)
+      socket.on('session_closed', (data) => {
+        const pane = getAllPanes().find(p => p.sessionId === data.session_id);
+        if (pane) {
+          pane.term.write('\r\n\x1b[33mSession closed by server.\x1b[0m\r\n');
+          cleanupPane(pane);
+        }
+      });
+
+      // Server shutting down (SIGTERM) — show message before WS drops
+      socket.on('shutting_down', () => {
+        getAllPanes().forEach(p => {
+          p.term.write('\r\n\x1b[33m\u26A0 App is restarting. Please reconnect shortly.\x1b[0m\r\n');
+        });
+      });
+    }
+
+    // Send input via WebSocket if connected, else HTTP fallback (AC-12)
+    async function sendInput(input, sid) {
+      if (!sid) return;
+      if (wsConnected && socket) {
+        socket.emit('terminal_input', { session_id: sid, input: input });
+      } else {
+        await fetch('/api/input', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid, input: input })
+        });
+      }
+    }
+
+    // Send resize via WebSocket if connected, else HTTP fallback (AC-13)
+    async function sendResize(cols, rows, sid) {
+      if (!sid) return;
+      if (wsConnected && socket) {
+        socket.emit('terminal_resize', { session_id: sid, cols: cols, rows: rows });
+      } else {
+        await fetch('/api/resize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sid, cols: cols, rows: rows })
+        });
+      }
+    }
+
+    // ── Web Worker for polling (HTTP fallback) ──────────────────────
+    const pollWorker = new Worker('/static/poll-worker.js');
+
+    pollWorker.onmessage = function(event) {
+      const msg = event.data;
+      const pane = getAllPanes().find(p => p.id === msg.paneId);
+      if (!pane) return;
+
+      switch (msg.type) {
+        case 'output': {
+          const data = msg.data;
+          if (data.timeout_warning) {
+            pane.term.write('\r\n\x1b[33m\u26A0 Session idle \u2014 will terminate soon if no activity.\x1b[0m\r\n');
+          }
+          if (data.output) pane.term.write(data.output);
+          break;
+        }
+        case 'session_ended':
+          if (msg.reason === 'auth_expired') {
+            pane.term.write('\r\n\x1b[33m\u26A0 Authentication expired. Please refresh the page to re-authenticate.\x1b[0m\r\n');
+          } else if (msg.reason === 'shutting_down') {
+            pane.term.write('\r\n\x1b[33m\u26A0 App is restarting. Please reconnect shortly.\x1b[0m\r\n');
+          } else {
+            pane.term.write('\r\n\x1b[33mShell process exited.\x1b[0m\r\n');
+          }
+          cleanupPane(pane);
+          break;
+        case 'connection_status':
+          if (msg.status === 'reconnecting') {
+            pane.term.write(`\r\n\x1b[33m\u26A0 Connection lost. Retrying (${msg.attempt}/${msg.maxAttempts})...\x1b[0m\r\n`);
+          }
+          break;
+        case 'session_dead':
+          pane.term.write('\r\n\x1b[31mConnection lost. Please refresh the page.\x1b[0m\r\n');
+          cleanupPane(pane);
+          break;
+      }
+    };
+
+    // Switch worker to background/foreground on visibility change
+    document.addEventListener('visibilitychange', () => {
+      pollWorker.postMessage({ type: 'visibility_change', hidden: document.hidden });
+      // Immediate WS heartbeat on tab hide/show — prevents reaping during background
+      // (setInterval is throttled by browsers in background tabs, this ensures a fresh timestamp)
+      if (wsConnected && socket) {
+        const sids = getAllPanes().map(p => p.sessionId).filter(Boolean);
+        if (sids.length > 0) socket.emit('heartbeat', { session_ids: sids });
+      }
+    });
+
+    // sendBeacon heartbeat on pagehide as safety net before Worker dies
+    window.addEventListener('pagehide', () => {
+      getAllPanes().forEach(p => {
+        if (p.sessionId) {
+          navigator.sendBeacon(
+            '/api/heartbeat',
+            new Blob([JSON.stringify({ session_id: p.sessionId })], { type: 'application/json' })
+          );
+        }
+      });
+    });
+
+    function cleanupPane(pane) {
+      pollWorker.postMessage({ type: 'stop_poll', paneId: pane.id });
+      if (pane.sessionId) {
+        // Leave WebSocket room — session stays alive for reattach
+        if (wsConnected && socket) {
+          socket.emit('leave_session', { session_id: pane.sessionId });
+        }
+        pane.sessionId = null;
+      }
+    }
+
+    function cleanupAllPanes() {
+      getAllPanes().forEach(p => cleanupPane(p));
+    }
+
+    // ── Session Picker Helpers ──────────────────────────────────────
+    async function showSessionPicker(term, sessions) {
+      // Returns { sid, reattached }
+      return new Promise((resolve) => {
+        let pendingDelete = false;  // guard against double-input during async kill
+
+        function renderPicker() {
+          term.write('\x1b[2J\x1b[H');  // clear
+          term.write('\r\n');
+          term.write('\x1b[1;36m  Existing sessions:\x1b[0m\r\n\r\n');
+
+          const attachedIds = new Set(getAllPanes().map(p => p.sessionId).filter(Boolean));
+          sessions.forEach((s, i) => {
+            const name = (s.label || s.process || 'bash').padEnd(14);
+            const proc = s.label ? ' \x1b[90m[' + (s.process || 'bash') + ']\x1b[0m' : '';
+            const ago = _formatAge(s.created_at);
+            const idle = s.idle_seconds > 60 ? ', idle ' + _formatDuration(s.idle_seconds) : '';
+            const open = attachedIds.has(s.session_id) ? ' \x1b[1;33m(open)\x1b[0m' : '';
+            term.write('  \x1b[1;32m' + (i + 1) + '\x1b[0m  ');
+            term.write('\x1b[1;37m' + name + '\x1b[0m');
+            term.write('\x1b[90m(' + ago + idle + ')\x1b[0m' + proc + open + '\r\n');
+          });
+
+          term.write('\r\n  \x1b[1;33mn\x1b[0m  New session\r\n');
+          term.write('  \x1b[1;31md\x1b[0m\x1b[1;31mN\x1b[0m Kill session N (e.g. d2)\r\n');
+          term.write('  \x1b[1;31mx\x1b[0m  Kill all and start fresh\r\n');
+          term.write('  \x1b[90mq\x1b[0m  Cancel\r\n');
+          term.write('\r\n\x1b[90m  Select:\x1b[0m ');
+        }
+
+        renderPicker();
+
+        let dPrefix = false;  // waiting for number after 'd'
+
+        const disposable = term.onData(data => {
+          if (pendingDelete) return;
+
+          if (dPrefix) {
+            // Expecting a number after 'd'
+            dPrefix = false;
+            const num = parseInt(data);
+            if (num >= 1 && num <= sessions.length) {
+              pendingDelete = true;
+              term.write(data + '\r\n\x1b[90m  Killing session...\x1b[0m');
+              fetch('/api/session/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessions[num - 1].session_id })
+              }).then(() => {
+                sessions.splice(num - 1, 1);
+                pendingDelete = false;
+                if (sessions.length === 0) {
+                  disposable.dispose();
+                  createSession().then(sid => resolve({ sid, reattached: false }));
+                } else if (sessions.length === 1) {
+                  disposable.dispose();
+                  _doAttach(term, sessions[0].session_id).then(sid => resolve({ sid, reattached: true }));
+                } else {
+                  renderPicker();
+                }
+              });
+            }
+            return;
+          }
+
+          const num = parseInt(data);
+          if (num >= 1 && num <= sessions.length) {
+            const picked = sessions[num - 1];
+            const openPanes = getAllPanes().filter(p => p.sessionId === picked.session_id);
+            if (openPanes.length > 0) {
+              term.write(data + '\r\n\x1b[1;33m  Already open in another pane.\x1b[0m\r\n');
+              setTimeout(renderPicker, 800);
+              return;
+            }
+            disposable.dispose();
+            _doAttach(term, picked.session_id).then(sid => resolve({ sid, reattached: true }));
+          } else if (data === 'd' || data === 'D') {
+            dPrefix = true;
+            term.write('d');
+          } else if (data === 'n' || data === 'N') {
+            disposable.dispose();
+            term.write('\r\n');
+            createSession().then(sid => resolve({ sid, reattached: false }));
+          } else if (data === 'x' || data === 'X') {
+            disposable.dispose();
+            term.write('\r\n\x1b[90m  Closing all sessions...\x1b[0m\r\n');
+            Promise.all(sessions.map(s =>
+              fetch('/api/session/close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: s.session_id })
+              })
+            )).then(() => createSession().then(sid => resolve({ sid, reattached: false })));
+          } else if (data === 'q' || data === 'Q' || data === '\x1b') {
+            disposable.dispose();
+            resolve({ sid: null, reattached: false, cancelled: true });
+          }
+        });
+      });
+    }
+
+    async function _doAttach(term, sessionId) {
+      const resp = await fetch('/api/session/attach', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId })
+      });
+      const data = await resp.json();
+      term.write('\x1b[2J\x1b[H');  // clear
+      if (data.output && data.output.length > 0) {
+        data.output.forEach(line => term.write(line));
+      }
+      // Show reattach message at the bottom without overwriting buffer content
+      // Tell PTY the current terminal size so it redraws correctly
+      await sendResize(term.cols, term.rows, sessionId);
+      return sessionId;
+    }
+
+    function _formatAge(timestamp) {
+      const seconds = Math.floor((Date.now() / 1000) - timestamp);
+      if (seconds < 60) return 'just now';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+      return Math.floor(seconds / 3600) + 'h ago';
+    }
+
+    function _formatDuration(seconds) {
+      if (seconds < 60) return seconds + 's';
+      if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+      return Math.floor(seconds / 3600) + 'h';
+    }
+
+    // ── Pane Management ────────────────────────────────────────────
+    async function createPane(tab, opts = {}) {
+      const id = 'pane-' + (++paneIdCounter);
+      const container = tab.paneContainer;
+      const element = document.createElement('div');
+      element.className = 'pane';
+      element.id = id;
+
+      // Add divider before second pane
+      if (tab.panes.length === 1) {
+        const divider = document.createElement('div');
+        divider.className = 'pane-divider';
+        container.appendChild(divider);
+        tab.divider = divider;
+        setupDividerDrag(divider, tab);
+      }
+
+      container.appendChild(element);
+
+      const term = new Terminal({
+        cursorBlink: true,
+        fontSize: currentFontSize,
+        fontFamily: fontFamilies[currentFontFamily] || 'monospace',
+        theme: themes[currentThemeName].theme,
+        scrollback: 10000,
+        scrollOnUserInput: true
+      });
+
+      const fitAddon = new FitAddon.FitAddon();
+      term.loadAddon(fitAddon);
+      term.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+      let searchAddon = null;
+      if (typeof SearchAddon !== 'undefined') {
+        searchAddon = new SearchAddon.SearchAddon();
+        term.loadAddon(searchAddon);
+      }
+
+      if (typeof ImageAddon !== 'undefined' && ImageAddon.ImageAddon) {
+        term.loadAddon(new ImageAddon.ImageAddon({
+          sixelSupport: true,
+          sixelScrolling: true,
+          iipSupport: true,
+          enableSizeReports: true,
+          storageLimit: 128
+        }));
+      }
+
+      term.open(element);
+      fitAddon.fit();
+
+      // On non-Mac platforms, let browser handle Ctrl+C (copy) and Ctrl+V (paste)
+      // so standard OS shortcuts work. On Mac, Cmd+C/Cmd+V already work natively.
+      const isMac = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (!isMac) {
+        term.attachCustomKeyEventHandler((e) => {
+          if (e.type !== 'keydown') return true;
+          const ctrlOnly = e.ctrlKey && !e.altKey && !e.metaKey;
+          // Ctrl+V → let browser fire paste event
+          if (ctrlOnly && !e.shiftKey && e.code === 'KeyV') return false;
+          // Ctrl+C → copy selected text (if any), otherwise send SIGINT
+          if (ctrlOnly && !e.shiftKey && e.code === 'KeyC' && term.hasSelection()) return false;
+          // Ctrl+Shift+C/V → alternate copy/paste
+          if (ctrlOnly && e.shiftKey && (e.code === 'KeyC' || e.code === 'KeyV')) return false;
+          return true;
+        });
+      }
+
+      // Check if PAT is configured and valid before creating session
+      const patResp = await fetch('/api/pat-status');
+      const patData = await patResp.json();
+
+      if (!patData.valid) {
+        // Show PAT setup prompt in the terminal
+        term.write('\x1b[2J\x1b[H');  // clear screen
+        term.write('\r\n');
+        term.write('\x1b[1;33m  Databricks CLI is not configured.\x1b[0m\r\n');
+        term.write('\r\n');
+        term.write('\x1b[37m  To allow the coding agent to act on your behalf,\x1b[0m\r\n');
+        term.write('\x1b[37m  create a short-lived token and paste it here.\x1b[0m\r\n');
+        term.write('\r\n');
+        const wsHost = patData.workspace_host || '';
+        const tokenUrl = wsHost ? wsHost + '#setting/account/token' : 'your Databricks workspace > User Settings > Access Tokens';
+        term.write('\x1b[90m  1. Open: \x1b[4;36m' + tokenUrl + '\x1b[0m\r\n');
+        term.write('\x1b[90m  2. Create a token with the shortest lifetime\x1b[0m\r\n');
+        term.write('\x1b[90m  3. Paste it below\x1b[0m\r\n');
+        term.write('\r\n');
+        term.write('\x1b[1;37m  Token: \x1b[0m');
+
+        // Collect token input from the terminal
+        let tokenInput = '';
+        await new Promise((resolve) => {
+          const disposable = term.onData(data => {
+            if (data === '\r' || data === '\n') {
+              // Enter pressed — submit token
+              term.write('\r\n');
+              disposable.dispose();
+              resolve();
+            } else if (data === '\x7f' || data === '\b') {
+              // Backspace
+              if (tokenInput.length > 0) {
+                tokenInput = tokenInput.slice(0, -1);
+                term.write('\b \b');
+              }
+            } else if (data >= ' ') {
+              // Printable character — mask with asterisks
+              tokenInput += data;
+              term.write('*');
+            }
+          });
+        });
+
+        if (!tokenInput.trim()) {
+          term.write('\x1b[1;31m  No token provided. Reload to try again.\x1b[0m\r\n');
+          const pane = { id, element, term, fitAddon, searchAddon, sessionId: null };
+          element.addEventListener('mousedown', () => focusPane(id));
+          tab.panes.push(pane);
+          focusPane(id);
+          return pane;
+        }
+
+        term.write('\x1b[90m  Validating token...\x1b[0m\r\n');
+
+        const configResp = await fetch('/api/configure-pat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: tokenInput.trim() })
+        });
+        const configData = await configResp.json();
+
+        if (configData.error) {
+          term.write('\x1b[1;31m  Error: ' + configData.error + '\x1b[0m\r\n');
+          term.write('\x1b[90m  Reload to try again.\x1b[0m\r\n');
+          const pane = { id, element, term, fitAddon, searchAddon, sessionId: null };
+          element.addEventListener('mousedown', () => focusPane(id));
+          tab.panes.push(pane);
+          focusPane(id);
+          return pane;
+        }
+
+        term.write('\x1b[1;32m  Token configured for ' + configData.user + '\x1b[0m\r\n');
+        term.write('\x1b[90m  Auto-rotation started. This token will be rotated out in 10 minutes.\x1b[0m\r\n');
+        term.write('\r\n');
+
+        // Wait for setup if not already complete
+        const setupCheckResp = await fetch('/api/setup-status');
+        const setupCheckData = await setupCheckResp.json();
+
+        if (setupCheckData.status !== 'complete') {
+            term.write('\x1b[90m  Setting up CLI tools...\x1b[0m\r\n');
+            while (true) {
+                await new Promise(r => setTimeout(r, 2000));
+                const pollResp = await fetch('/api/setup-status');
+                const pollData = await pollResp.json();
+                if (pollData.status === 'complete' || pollData.status === 'error') {
+                    if (pollData.status === 'complete') {
+                        term.write('\x1b[1;32m  Setup complete!\x1b[0m\r\n\r\n');
+                    } else {
+                        term.write('\x1b[1;33m  Setup completed with warnings.\x1b[0m\r\n\r\n');
+                    }
+                    break;
+                }
+            }
+        }
+        var sid = await createSession(tab.label);
+        var reattached = false;
+      } else if (!opts.newSession) {
+        // PAT is valid, initial page load — always create a fresh session.
+        // Reattaching to a previous session is intentional (Ctrl+Shift+S).
+        const setupResp2 = await fetch('/api/setup-status');
+        const setupData2 = await setupResp2.json();
+        if (setupData2.status !== 'complete' && setupData2.status !== 'error') {
+          term.write('\x1b[90m  Setting up CLI tools...\x1b[0m\r\n');
+          while (true) {
+            await new Promise(r => setTimeout(r, 2000));
+            const pollResp2 = await fetch('/api/setup-status');
+            const pollData2 = await pollResp2.json();
+            if (pollData2.status === 'complete' || pollData2.status === 'error') {
+              if (pollData2.status === 'complete') {
+                term.write('\x1b[1;32m  Setup complete!\x1b[0m\r\n\r\n');
+              } else {
+                term.write('\x1b[1;33m  Setup completed with warnings.\x1b[0m\r\n\r\n');
+              }
+              break;
+            }
+          }
+        }
+        var sid = await createSession(tab.label);
+        var reattached = false;
+      } else {
+        // Split pane or new tab — always create fresh session
+        var sid = await createSession(tab.label);
+        var reattached = false;
+      }
+
+      if (!reattached) {
+        await sendResize(term.cols, term.rows, sid);
+
+        // CoDA splash screen — only for new sessions, not reattach
+        const splashArt = [
+          ' \u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2588\u2588\u2588\u2557 ',
+          '\u2588\u2588\u2554\u2550\u2550\u2550\u2550\u255d \u2588\u2588\u2554\u2550\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557',
+          '\u2588\u2588\u2551      \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551',
+          '\u2588\u2588\u2551      \u2588\u2588\u2551   \u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551',
+          '\u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u255a\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2588\u2588\u2588\u2588\u2554\u255d\u2588\u2588\u2551  \u2588\u2588\u2551',
+          ' \u255a\u2550\u2550\u2550\u2550\u2550\u255d  \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u2550\u2550\u2550\u2550\u255d \u255a\u2550\u255d  \u255a\u2550\u255d',
+        ];
+        term.write('\x1b[2J\x1b[H');  // clear screen, cursor home
+        term.write('\r\n');
+        splashArt.forEach(line => term.write('\x1b[36m' + line + '\x1b[0m\r\n'));
+        term.write('\r\n');
+        term.write('\x1b[1;37m         CoWorking Developer Agents\x1b[0m\r\n');
+        term.write('\x1b[90m \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\x1b[0m\r\n');
+        term.write('\x1b[90m v' + appVersion + '  \u2502  Ready\x1b[0m\r\n');
+        term.write('\r\n');
+        term.write('\x1b[90m Ctrl+/       keyboard shortcuts\x1b[0m\r\n');
+        term.write('\x1b[90m Ctrl+Shift+S manage sessions\x1b[0m\r\n');
+        term.write('\x1b[90m Projects in ~/projects auto-sync to Workspace on commit\x1b[0m\r\n');
+        term.write('\r\n');
+        term.write('\x1b[33m Sessions persist until you type \x1b[1mexit\x1b[0m\x1b[33m — idle sessions expire after 24h.\x1b[0m\r\n');
+        term.write('\r\n');
+      }
+
+      const pane = { id, element, term, fitAddon, searchAddon, sessionId: sid };
+      term.onData(data => sendInput(data, pane.sessionId));
+
+      // Join WebSocket room if connected; otherwise start HTTP polling (AC-11, AC-16)
+      if (wsConnected && socket) {
+        socket.emit('join_session', { session_id: sid });
+      } else {
+        pollWorker.postMessage({ type: 'start_poll', paneId: id, sessionId: sid });
+      }
+
+      // Click to focus
+      element.addEventListener('mousedown', () => focusPane(id));
+
+      tab.panes.push(pane);
+      focusPane(id);
+
+      return pane;
+    }
+
+    // ── Tab Management ──────────────────────────────────────────────
+    async function createTab(opts = {}) {
+      if (tabs.length >= MAX_TABS) return null;
+
+      const id = 'tab-' + (++tabIdCounter);
+      const label = 'Shell ' + tabIdCounter;
+
+      // Create per-tab pane container
+      const paneContainer = document.createElement('div');
+      paneContainer.className = 'tab-pane-container';
+      paneContainer.id = id + '-panes';
+      document.body.appendChild(paneContainer);
+
+      const tab = {
+        id,
+        label,
+        panes: [],
+        activePaneId: null,
+        paneContainer,
+        divider: null
+      };
+
+      tabs.push(tab);
+
+      // Render tab in the tab bar
+      renderTabBar();
+
+      // Switch to new tab (hides others)
+      switchTab(id);
+
+      // Create first pane — pass opts through (newSession for user-initiated tabs)
+      await createPane(tab, opts);
+
+      updateTabButtons();
+      return tab;
+    }
+
+    function switchTab(id) {
+      // Skip if already on this tab (preserves DOM for dblclick rename)
+      if (activeTabId === id) return;
+
+      activeTabId = id;
+
+      // Toggle pane container visibility
+      tabs.forEach(t => {
+        t.paneContainer.classList.toggle('hidden', t.id !== id);
+      });
+
+      // Update tab bar active state
+      renderTabBar();
+
+      // Refit panes in the newly visible tab and focus
+      const tab = getActiveTab();
+      if (tab && tab.panes.length > 0) {
+        requestAnimationFrame(() => {
+          refitAllPanes();
+          const ap = tab.panes.find(p => p.id === tab.activePaneId) || tab.panes[0];
+          if (ap) ap.term.focus();
+        });
+      }
+    }
+
+    function closeTab(id) {
+      const tab = tabs.find(t => t.id === id);
+      if (!tab) return;
+
+      // Cleanup all panes in this tab
+      tab.panes.forEach(p => {
+        cleanupPane(p);
+        p.term.dispose();
+      });
+
+      // Remove DOM
+      tab.paneContainer.remove();
+
+      // Remove from array
+      tabs = tabs.filter(t => t.id !== id);
+
+      // If we closed the active tab, switch to the last tab
+      if (activeTabId === id) {
+        if (tabs.length > 0) {
+          switchTab(tabs[tabs.length - 1].id);
+        }
+      }
+
+      // If no tabs left, create a new one
+      if (tabs.length === 0) {
+        tabIdCounter = 0;
+        createTab({ newSession: true });
+        return;
+      }
+
+      renderTabBar();
+      updateTabButtons();
+    }
+
+    function startRenameTab(id) {
+      const labelEl = document.querySelector(`#tab-bar .tab[data-tab-id="${id}"] .tab-label`);
+      if (!labelEl) return;
+      labelEl.contentEditable = 'true';
+      labelEl.focus();
+
+      // Select all text
+      const range = document.createRange();
+      range.selectNodeContents(labelEl);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+
+      function finishRename() {
+        labelEl.contentEditable = 'false';
+        const newLabel = labelEl.textContent.trim();
+        const tab = tabs.find(t => t.id === id);
+        if (tab && newLabel) {
+          tab.label = newLabel;
+        } else if (tab) {
+          labelEl.textContent = tab.label; // revert empty
+        }
+        labelEl.removeEventListener('blur', finishRename);
+        labelEl.removeEventListener('keydown', handleKey);
+        // Refocus terminal
+        const ap = getActivePane();
+        if (ap) ap.term.focus();
+      }
+
+      function handleKey(e) {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          finishRename();
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          const tab = tabs.find(t => t.id === id);
+          if (tab) labelEl.textContent = tab.label;
+          finishRename();
+        }
+      }
+
+      labelEl.addEventListener('blur', finishRename);
+      labelEl.addEventListener('keydown', handleKey);
+    }
+
+    function renderTabBar() {
+      const tabBar = document.getElementById('tab-bar');
+      const newTabBtn = document.getElementById('new-tab-btn');
+
+      // Remove old tab elements (keep the + button)
+      tabBar.querySelectorAll('.tab').forEach(el => el.remove());
+
+      // Insert tabs before the + button
+      tabs.forEach((tab, index) => {
+        const tabEl = document.createElement('div');
+        tabEl.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
+        tabEl.dataset.tabId = tab.id;
+
+        const label = document.createElement('span');
+        label.className = 'tab-label';
+        label.textContent = tab.label;
+        tabEl.appendChild(label);
+
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'tab-close';
+        closeBtn.textContent = '\u00D7';
+        closeBtn.title = 'Close tab';
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeTab(tab.id);
+        });
+        tabEl.appendChild(closeBtn);
+
+        // Click to switch
+        tabEl.addEventListener('click', () => switchTab(tab.id));
+
+        // Double-click to rename
+        tabEl.addEventListener('dblclick', (e) => {
+          e.preventDefault();
+          startRenameTab(tab.id);
+        });
+
+        tabBar.insertBefore(tabEl, newTabBtn);
+      });
+
+      // Update + button state
+      newTabBtn.disabled = tabs.length >= MAX_TABS;
+    }
+
+    function updateTabButtons() {
+      // Update toolbar pane buttons for active tab
+      const tab = getActiveTab();
+      const multi = tab && tab.panes.length > 1;
+      document.getElementById('close-pane-btn').style.display = multi ? '' : 'none';
+      document.getElementById('next-pane-btn').style.display = multi ? '' : 'none';
+      document.getElementById('split-btn').style.display = (tab && tab.panes.length >= 2) ? 'none' : '';
+    }
+
+    async function splitPane() {
+      const tab = getActiveTab();
+      if (!tab || tab.panes.length >= 2) return;
+      status.textContent = 'Splitting...';
+      status.style.display = '';
+      try {
+        await createPane(tab, { newSession: true });
+        // Reset flex for even split
+        tab.panes.forEach(p => { p.element.style.flex = '1'; });
+        refitAllPanes();
+        updateTabButtons();
+        status.style.display = 'none';
+      } catch (e) {
+        status.textContent = 'Split failed: ' + e.message;
+        status.style.color = '#ff5555';
+      }
+    }
+
+    function closeActivePane() {
+      const tab = getActiveTab();
+      if (!tab) return;
+
+      // If only one pane, close the whole tab
+      if (tab.panes.length <= 1) {
+        closeTab(tab.id);
+        return;
+      }
+
+      const ap = tab.panes.find(p => p.id === tab.activePaneId) || tab.panes[0];
+      if (!ap) return;
+
+      cleanupPane(ap);
+      ap.term.dispose();
+      ap.element.remove();
+
+      // Remove divider
+      if (tab.divider) {
+        tab.divider.remove();
+        tab.divider = null;
+      }
+
+      tab.panes = tab.panes.filter(p => p.id !== ap.id);
+
+      // Reset remaining pane to full width
+      if (tab.panes.length === 1) {
+        tab.panes[0].element.style.flex = '1';
+      }
+
+      focusPane(tab.panes[0].id);
+      refitAllPanes();
+      updateTabButtons();
+    }
+
+    function cyclePaneFocus(direction) {
+      const tab = getActiveTab();
+      if (!tab || tab.panes.length <= 1) return;
+      const idx = tab.panes.findIndex(p => p.id === tab.activePaneId);
+      const next = direction === 'next'
+        ? (idx + 1) % tab.panes.length
+        : (idx - 1 + tab.panes.length) % tab.panes.length;
+      focusPane(tab.panes[next].id);
+    }
+
+    function cycleTabFocus(direction) {
+      if (tabs.length <= 1) return;
+      const idx = tabs.findIndex(t => t.id === activeTabId);
+      const next = direction === 'next'
+        ? (idx + 1) % tabs.length
+        : (idx - 1 + tabs.length) % tabs.length;
+      switchTab(tabs[next].id);
+    }
+
+    function jumpToTab(number) {
+      // number is 1-indexed
+      if (number >= 1 && number <= tabs.length) {
+        switchTab(tabs[number - 1].id);
+      }
+    }
+
+    // ── Divider Drag ───────────────────────────────────────────────
+    function setupDividerDrag(divider, tab) {
+      let dragging = false;
+
+      divider.addEventListener('mousedown', e => {
+        e.preventDefault();
+        dragging = true;
+        divider.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+      });
+
+      document.addEventListener('mousemove', e => {
+        if (!dragging || tab.panes.length < 2) return;
+        const rect = tab.paneContainer.getBoundingClientRect();
+        let pct = ((e.clientX - rect.left) / rect.width) * 100;
+        pct = Math.max(15, Math.min(85, pct));
+        tab.panes[0].element.style.flex = `0 0 ${pct}%`;
+        tab.panes[1].element.style.flex = '1 1 0';
+        refitAllPanes();
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (dragging) {
+          dragging = false;
+          divider.classList.remove('dragging');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          refitAllPanes();
+        }
+      });
+    }
+
+    // ── Pane toolbar buttons ────────────────────────────────────────
+    document.getElementById('new-tab-btn').addEventListener('click', () => createTab({ newSession: true }));
+    document.getElementById('split-btn').addEventListener('click', () => splitPane());
+    document.getElementById('close-pane-btn').addEventListener('click', () => closeActivePane());
+    document.getElementById('next-pane-btn').addEventListener('click', () => cyclePaneFocus('next'));
+    document.getElementById('sessions-btn').addEventListener('click', async () => {
+      const tab = getActiveTab();
+      if (!tab || tab.panes.length === 0) return;
+      const pane = tab.panes.find(p => p.id === tab.activePaneId) || tab.panes[0];
+      if (!pane.term) return;
+
+      // Fetch live sessions
+      const resp = await fetch('/api/sessions');
+      const liveSessions = (await resp.json()).filter(s => !s.exited);
+
+      if (liveSessions.length === 0) {
+        pane.term.write('\r\n\x1b[90m  No other sessions.\x1b[0m\r\n');
+        return;
+      }
+
+      // Save current session so we can restore on cancel
+      const prevSessionId = pane.sessionId;
+
+      // Detach current pane from its session (stop polling, leave WS room)
+      pollWorker.postMessage({ type: 'stop_poll', paneId: pane.id });
+      if (pane.sessionId && wsConnected && socket) {
+        socket.emit('leave_session', { session_id: pane.sessionId });
+      }
+
+      // Show picker in this pane
+      const result = await showSessionPicker(pane.term, liveSessions);
+
+      if (result.cancelled) {
+        // Restore previous session — replay scrollback buffer via _doAttach
+        if (prevSessionId) {
+          await _doAttach(pane.term, prevSessionId);
+          pane.sessionId = prevSessionId;
+          if (wsConnected && socket) {
+            socket.emit('join_session', { session_id: prevSessionId });
+          } else {
+            pollWorker.postMessage({ type: 'start_poll', paneId: pane.id, sessionId: prevSessionId });
+          }
+        }
+        return;
+      }
+
+      // Wire up the selected session
+      const sid = result.sid;
+      pane.sessionId = sid;
+      if (wsConnected && socket) {
+        socket.emit('join_session', { session_id: sid });
+      } else {
+        pollWorker.postMessage({ type: 'start_poll', paneId: pane.id, sessionId: sid });
+      }
+    });
+
+    // ── Toast Notification ──────────────────────────────────────────
+    function showToast(message, type = 'info') {
+      const toast = document.createElement('div');
+      toast.textContent = message;
+      toast.style.cssText = `
+        position: fixed; bottom: 20px; right: 20px; padding: 10px 18px;
+        background: ${type === 'error' ? '#e74c3c' : '#2ecc71'}; color: white;
+        border-radius: 6px; font-size: 13px; z-index: 10000;
+        opacity: 0; transition: opacity 0.3s;
+      `;
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => toast.style.opacity = '1');
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // ── Clipboard Paste (image upload) ─────────────────────────────
+    // Use capture phase (3rd arg = true) so we fire BEFORE xterm.js consumes the event
+    document.addEventListener('paste', async (e) => {
+      const active = getActivePane();
+      if (!active || !active.sessionId) {
+        console.log('[paste] No active pane or session');
+        return;
+      }
+
+      const items = e.clipboardData?.items;
+      if (!items) {
+        console.log('[paste] No clipboardData items');
+        return;
+      }
+
+      console.log('[paste] Items:', Array.from(items).map(i => i.type));
+
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const blob = item.getAsFile();
+          if (!blob) { console.log('[paste] Could not get file from item'); continue; }
+
+          console.log('[paste] Uploading image:', blob.type, blob.size, 'bytes');
+          showToast('Uploading image...');
+          const ext = item.type.split('/')[1] || 'png';
+          const formData = new FormData();
+          formData.append('file', blob, `clipboard-${Date.now()}.${ext}`);
+
+          try {
+            const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+            console.log('[paste] Response status:', resp.status);
+            if (!resp.ok) {
+              const text = await resp.text();
+              console.error('[paste] Upload failed:', resp.status, text);
+              showToast(`Upload failed (${resp.status})`, 'error');
+              return;
+            }
+            const data = await resp.json();
+            if (data.path) {
+              sendInput(data.path + ' ', active.sessionId);
+              showToast('Image saved: ' + data.path);
+            } else if (data.error) {
+              showToast('Upload error: ' + data.error, 'error');
+            }
+          } catch (err) {
+            console.error('[paste] Upload exception:', err);
+            showToast('Upload failed: ' + err.message, 'error');
+          }
+          return;
+        }
+      }
+      // Text paste — xterm handles natively
+    }, true);  // capture phase
+
+    // ── Drag-and-Drop (image upload fallback) ──────────────────────
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const active = getActivePane();
+      if (!active || !active.sessionId) return;
+
+      for (const file of e.dataTransfer.files) {
+        if (!file.type.startsWith('image/')) continue;
+
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+
+        try {
+          const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+          console.log('[drop] Response status:', resp.status);
+          if (!resp.ok) {
+            const text = await resp.text();
+            console.error('[drop] Upload failed:', resp.status, text);
+            showToast(`Upload failed (${resp.status})`, 'error');
+            continue;
+          }
+          const data = await resp.json();
+          if (data.path) {
+            sendInput(data.path + ' ', active.sessionId);
+            showToast('Image saved: ' + data.path);
+          } else if (data.error) {
+            showToast('Upload error: ' + data.error, 'error');
+          }
+        } catch (err) {
+          console.error('[drop] Upload exception:', err);
+          showToast('Upload failed: ' + err.message, 'error');
+        }
+      }
+    });
+
+    // ── Version ──────────────────────────────────────────────────────
+    let appVersion = '0.0.0';
+
+    // ── Init ───────────────────────────────────────────────────────
+    async function init() {
+      try {
+        // Fetch version inside async init() to avoid top-level await
+        try {
+          const vResp = await fetch('/api/version');
+          if (vResp.ok) { const vData = await vResp.json(); appVersion = vData.version || appVersion; }
+        } catch(e) { /* fallback */ }
+
+        status.textContent = 'Initializing terminal...';
+
+        if (typeof Terminal === 'undefined') throw new Error('xterm.js not loaded');
+        if (typeof FitAddon === 'undefined') throw new Error('FitAddon not loaded');
+
+        // Initialize WebSocket connection (falls back to HTTP polling if unavailable)
+        initWebSocket();
+
+        await createTab();
+
+        status.textContent = 'Connected!';
+        setTimeout(() => { status.style.display = 'none'; }, 1000);
+
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => refitAllPanes(), 150);
+        });
+        window.addEventListener('beforeunload', () => cleanupAllPanes());
+
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        status.style.color = '#ff5555';
+        console.error(e);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

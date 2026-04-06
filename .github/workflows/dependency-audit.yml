@@ -1,0 +1,74 @@
+name: Dependency Audit
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "requirements.txt"
+      - "requirements.lock"
+      - "pyproject.toml"
+  push:
+    branches: [main]
+    paths:
+      - "requirements.txt"
+      - "requirements.lock"
+      - "pyproject.toml"
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC — catch newly disclosed CVEs
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Install audit tools
+        run: pip install pip-audit==2.9.0
+
+      - name: Compile requirements.txt from pyproject.toml
+        run: |
+          # Keep requirements.txt in sync with pyproject.toml so Dependabot can scan it.
+          # Note: [tool.uv.sources] git overrides are not resolved by pip compile —
+          # requests and cryptography fall back to their PyPI versions here, which is
+          # intentional for Dependabot's purposes.
+          uv pip compile pyproject.toml -o /tmp/requirements.compiled.txt
+          if ! diff -q requirements.txt /tmp/requirements.compiled.txt > /dev/null 2>&1; then
+            echo "::warning::requirements.txt is out of date with pyproject.toml. Run: uv pip compile pyproject.toml -o requirements.txt"
+          fi
+
+      - name: Audit pinned dependencies
+        run: |
+          if [ -f requirements.lock ]; then
+            echo "Auditing requirements.lock (pinned)..."
+            # Strip hashes before auditing — pip-audit's pip backend chokes on
+            # platform-conditional deps (greenlet) missing from the lockfile.
+            # The hashes are verified at install time, not audit time.
+            sed '/^[[:space:]]*--hash/d' requirements.lock > /tmp/requirements.lock.nohash
+            pip-audit -r /tmp/requirements.lock.nohash --desc on
+          else
+            echo "::warning::No requirements.lock found — auditing requirements.txt (unpinned)"
+            pip-audit -r requirements.txt --desc on
+          fi
+
+      - name: Check lockfile is up to date
+        run: |
+          uv pip compile requirements.txt -o /tmp/requirements.lock.check --generate-hashes
+          if ! diff -q requirements.lock /tmp/requirements.lock.check > /dev/null 2>&1; then
+            echo "::warning::requirements.lock is out of date. Run: uv pip compile requirements.txt -o requirements.lock --generate-hashes"
+          fi
+
+      - name: Audit npm packages
+        run: |
+          for pkg in opencode-ai @ai-sdk/openai @openai/codex @google/gemini-cli; do
+            echo "--- Checking $pkg ---"
+            npm view "$pkg" version 2>/dev/null || echo "::warning::Could not resolve $pkg"
+          done
